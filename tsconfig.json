@@ -1,0 +1,16 @@
+{
+    "include": ["src"],
+    "exclude": ["**/*.test.*"],
+    "compilerOptions": {
+        "erasableSyntaxOnly": true,
+        "module": "esnext",
+        "moduleResolution": "bundler",
+        "declaration": true,
+        "declarationDir": "./dist/",
+        "emitDeclarationOnly": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "strict": true,
+        "target": "esnext"
+    }
+}

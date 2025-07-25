@@ -1,0 +1,40 @@
+{
+    "name": "@_apparatus_/intl-tools",
+    "description": "A small set of tools to support application internationalization.",
+    "version": "0.0.0",
+    "type": "module",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/pedro00dk/apparatus-intl-tools"
+    },
+    "author": {
+        "name": "Pedro Henrique",
+        "email": "pedro00dk@gmail.com"
+    },
+    "types": "dist/index.d.ts",
+    "exports": {
+        ".": {
+            "import": "./dist/index.js",
+            "types": "./dist/index.d.ts"
+        }
+    },
+    "keywords": [
+        "localization",
+        "internationalization",
+        "intl",
+        "localize",
+        "translation",
+        "i18n",
+        "l10n"
+    ],
+    "scripts": {
+        "build": "vite build && tsc",
+        "test": "node --test ./**/*.test.*"
+    },
+    "devDependencies": {
+        "@types/node": "24.0.15",
+        "typescript": "5.8.3",
+        "vite": "7.0.5"
+    }
+}
