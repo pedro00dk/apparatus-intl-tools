@@ -1,1 +1,1 @@
-export * from './localizer'
+export * from './localizer.ts'
