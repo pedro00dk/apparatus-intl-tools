@@ -29,7 +29,7 @@ test('load resources', async () => {
 
 test('translate key', async () => {
     const localizer = createLocalizer<Translations>({ load })
-    const { proxy: t } = localizer
+    const { t } = localizer
     localizer.setLocales('en-US')
     localizer.setModules('base')
     await localizer.wait()
@@ -40,12 +40,12 @@ test('translate key', async () => {
 })
 
 test('resolve tag', async () => {
-    const localizer = createLocalizer<Translations>({ load })
-    const { proxy: t, tagger: tag } = localizer
+    const localizer = createLocalizer<Translations, string>({ load })
+    const { t } = localizer
     localizer.setLocales('en-US')
     localizer.setModules('base')
     await localizer.wait()
-    assert(tag(t.base.tags(), { a: tags }), '<>0<a>1<b></b>2</a>3</>')
-    assert.doesNotThrow(() => tag(t.base.o(), {}))
-    assert.doesNotThrow(() => tag(t.base.u(), {}))
+    assert(t.base.tags({}, { a: tags }), '<>0<a>1<b></b>2</a>3</>')
+    assert.doesNotThrow(() => t.base.o({}, {}))
+    assert.doesNotThrow(() => t.base.u({}, {}))
 })

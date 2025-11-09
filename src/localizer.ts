@@ -6,7 +6,10 @@ export type Resource = { [_ in string]: Resource | string }
 /**
  * Function type to format resolved translation values.
  */
-export type Formatter = (_?: object) => string
+type Formatter<TTag> = {
+    <T extends [_?: object]>(...args: T): string
+    <T extends [_?: object, _?: Tagger<TTag>]>(...args: T): TTag | string
+}
 
 /**
  * Tagger describes wrappers for {@linkcode createTagger}.
@@ -21,10 +24,10 @@ export type Tagger<TTag> = { [_ in string]: (children: (TTag | string)[], tag: s
  *
  * @param TValue Value nest or to return getter.
  */
-export type Translation<TValue> = TValue extends object
-    ? UnionToIntersection<{ [k in keyof TValue]: Nest<k, TValue[k]> }[keyof TValue]>
+export type Translation<TValue, TTag> = TValue extends object
+    ? UnionToIntersection<{ [k in keyof TValue]: Nest<k, TValue[k], TTag> }[keyof TValue]>
     : TValue extends string
-    ? Formatter
+    ? Formatter<TTag>
     : never
 
 /**
@@ -35,15 +38,15 @@ export type Translation<TValue> = TValue extends object
  * @param TKey Key to nest.
  * @param TValue Key value to nest.
  */
-type Nest<TKey extends PropertyKey, TValue> = {
-    [_ in TKey]: Translation<TValue> & Fallback
-} & (TKey extends `${infer TPre}.${infer TSuf}` ? { [_ in TPre]: Nest<TSuf, TValue> } : unknown) &
-    Fallback
+type Nest<TKey extends PropertyKey, TValue, TTag> = {
+    [_ in TKey]: Translation<TValue, TTag> & Fallback<TTag>
+} & (TKey extends `${infer TPre}.${infer TSuf}` ? { [_ in TPre]: Nest<TSuf, TValue, TTag> } : unknown) &
+    Fallback<TTag>
 
 /**
  * Fallback provides an escape hatch to untyped translation keys. Untyped keys require an extra property access to `$`.
  */
-type Fallback = { [_ in string]: Fallback } & { $: Formatter }
+type Fallback<TTag> = { [_ in string]: Fallback<TTag> } & { $: Formatter<TTag> }
 
 type UnionToIntersection<U> = (U extends unknown ? (k: U) => void : never) extends (k: infer I) => void ? I : never
 
@@ -72,7 +75,7 @@ type UnionToIntersection<U> = (U extends unknown ? (k: U) => void : never) exten
  */
 export const createLocalizer = <TTranslations extends Resource, TTag = string>(params: {
     load: (locale: string, module: string) => Resource | Promise<Resource>
-    parse?: (locale: string, module: string, key: string[], raw: string) => Formatter
+    parse?: (locale: string, module: string, key: string[], raw: string) => Formatter<TTag>
     notify?: (locale: string, module: string, promise: Promise<Resource>) => (key: string[], raw?: unknown) => void
     tag?: Parameters<typeof createTagger<TTag>>[0]
 }) => {
@@ -128,7 +131,7 @@ export const createLocalizer = <TTranslations extends Resource, TTag = string>(p
         })
     }
 
-    const format = (module: string, key: string[], values?: Parameters<Formatter>[0]) => {
+    const format = (module: string, key: string[], values?: Parameters<Formatter<TTag>>[0]) => {
         for (const locale of locales) {
             const resource = resources[locale]?.[module]
             const id = `${locale}:${module}:${key}`
@@ -141,8 +144,9 @@ export const createLocalizer = <TTranslations extends Resource, TTag = string>(p
         return `${locales.join('|')}:${module}:${key.join('.')}`
     }
 
-    const proxy = createProxy<TTranslations>(format)
     const tagger = createTagger<TTag>(params.tag)
+    const proxy = createProxy<TTranslations, TTag>(format, tagger)
+
     return {
         locales: () => locales,
         modules: () => modules,
@@ -153,38 +157,9 @@ export const createLocalizer = <TTranslations extends Resource, TTag = string>(p
         wait,
         read,
         format,
-        proxy,
         tagger,
+        t: proxy,
     }
-}
-
-/**
- * Create a typed proxy tree for easier access to resource translations.
- *
- * When resolving a translation, if it does not exist in the type, it will trigger a typescript error.
- * This behavior is useful to ensure that all translations are typed and available in the codebase. However, in some
- * cases it is necessary to access translations dynamically, where key parts might not be typed. A special `$` key
- * is provided to bypass the type checking.
- *
- * @param format {@linkcode createLocalizer} `format` function.
- * @param TTranslations Type of the translations to be loaded, used to type the translation keys.
- */
-const createProxy = <TTranslations extends Resource>(
-    format: (module: string, key: string[], values?: Parameters<Translation<string>>[0]) => string,
-): Translation<TTranslations> => {
-    type ProxyObject = { module: string; key: string[]; children: { [_ in string]: ProxyObject } }
-    const proxyObject = (module: string, key: string[]) => Object.assign(() => {}, { module, key, children: {} })
-    const proxyHandler: ProxyHandler<ProxyObject> = {
-        apply: (target, _, [values]: [Parameters<Translation<string>>[0]]) => format(target.module, target.key, values),
-        get: (target, p, receiver: unknown) => {
-            if (typeof p === 'symbol' || p === '$') return receiver
-            const module = target.module || p
-            const key = !target.module ? target.key : !target.key.length ? [p] : [...target.key, p]
-            return (target.children[p] ??= new Proxy(proxyObject(module, key), proxyHandler))
-        },
-    }
-    proxyObject('', [])()
-    return new Proxy(proxyObject('', []), proxyHandler) as unknown as Translation<TTranslations>
 }
 
 /**
@@ -202,7 +177,7 @@ const createProxy = <TTranslations extends Resource>(
  * @param TTag Type of the tag used to wrap the translation resources.
  */
 const createTagger =
-    <TTag = string>(tag: Tagger<TTag>[string]) =>
+    <TTag>(tag: Tagger<TTag>[string]) =>
     (text = '', tags: Tagger<TTag> = {}) => {
         const stack: (TTag | string)[][] = [[]]
         let done = 0
@@ -220,3 +195,36 @@ const createTagger =
         if (done < text.length) stack.at(-1)!.push(text.slice(done))
         return tag(stack.flat(), '')
     }
+
+/**
+ * Create a typed proxy tree for easier access to resource translations.
+ *
+ * When resolving a translation, if it does not exist in the type, it will trigger a typescript error.
+ * This behavior is useful to ensure that all translations are typed and available in the codebase. However, in some
+ * cases it is necessary to access translations dynamically, where key parts might not be typed. A special `$` key
+ * is provided to bypass the type checking.
+ *
+ * @param format {@linkcode createLocalizer} `format` function.
+ * @param TTranslations Type of the translations to be loaded, used to type the translation keys.
+ */
+const createProxy = <TTranslations extends Resource, TTag>(
+    format: (module: string, key: string[], values?: Parameters<Translation<string, TTag>>[0]) => string,
+    tagger: ReturnType<typeof createTagger<TTag>>,
+): Translation<TTranslations, TTag> => {
+    type ProxyObject = { module: string; key: string[]; children: { [_ in string]: ProxyObject } }
+    const proxyObject = (module: string, key: string[]) => Object.assign(() => {}, { module, key, children: {} })
+    const proxyHandler: ProxyHandler<ProxyObject> = {
+        apply: (target, _, [values, tags]: Parameters<Translation<string, TTag>>) => {
+            const text = format(target.module, target.key, values)
+            return tags ? tagger(text, tags) : text
+        },
+        get: (target, p, receiver: unknown) => {
+            if (typeof p === 'symbol' || p === '$') return receiver
+            const module = target.module || p
+            const key = !target.module ? target.key : !target.key.length ? [p] : [...target.key, p]
+            return (target.children[p] ??= new Proxy(proxyObject(module, key), proxyHandler))
+        },
+    }
+    proxyObject('', [])()
+    return new Proxy(proxyObject('', []), proxyHandler) as unknown as Translation<TTranslations, TTag>
+}
