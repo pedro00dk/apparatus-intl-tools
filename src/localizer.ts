@@ -1,26 +1,35 @@
 /**
- * Resource type that must be returned when loading translations.
+ * Base translation resource type.
  */
-export type Resource = { [_ in string]: Resource | string }
-
-/**
- * Function type to format resolved translation values.
- */
-type Formatter<TTag> = {
-    <T extends [_?: object]>(...args: T): string
-    <T extends [_?: object, _?: Tagger<TTag>]>(...args: T): TTag | string
+export type Resource = {
+    [_ in string]: Resource | string
 }
 
 /**
- * Tagger describes wrappers for {@linkcode createTagger}.
+ * Function type to format resolved translation values.
  *
- * @param TTag Tag aggregation type.
+ * This function produces a string or `TTag` based on the provided arguments.
+ *
+ * @param TTag Tag type.
  */
-export type Tagger<TTag> = { [_ in string]: (children: (TTag | string)[], tag: string) => TTag | string }
+type Formatter<TTag> = {
+    <T extends [_?: object]>(...args: T): string
+    <T extends [_?: object, _?: Tagger<TTag>]>(...args: T): string | TTag
+}
 
 /**
- * Translation nests translation objects' keys by using {@linkcode Nest} and create getters to final values.
- * If `TValue` it is an object, return its nested internal keys. Otherwise, return a parameterized getter.
+ * Wrapper functions for transforming html-like tags inside translations.
+ *
+ * @param TTag Tag type.
+ */
+export type Tagger<TTag> = {
+    [_ in string]: (children: (string | TTag)[], tag: string) => string | TTag
+}
+
+/**
+ * Resolve nested keys in objects or using dot notation with to create a centralized getter to all keys in `TValue`.
+ * - If `TValue` it is an object, recursively return its internal keys, resolving dot notation with {@linkcode Nest}.
+ * - If `TValue` is a string, return a parameterized {@linkcode Formatter}.
  *
  * @param TValue Value nest or to return getter.
  */
@@ -48,28 +57,31 @@ type Nest<TKey extends PropertyKey, TValue, TTag> = {
  */
 type Fallback<TTag> = { [_ in string]: Fallback<TTag> } & { $: Formatter<TTag> }
 
+/**
+ * Convert a union of types `U` to an intersection of the same types.
+ */
 type UnionToIntersection<U> = (U extends unknown ? (k: U) => void : never) extends (k: infer I) => void ? I : never
 
 /**
- * Create a localizer instance that orchestrate translation resource loading for multiple locales and modules.
+ * Create a localizer that orchestrates translation resources loading for multiple locales and modules.
  *
  * Locales and modules can be added or modified dynamically. Translation resources are downloaded when locales or
- * modules change. Resources are fetched using the `params.load` provided by the client.
+ * modules change. Resources are fetched using the `params.load` provided by the caller.
  *
  * The following translation utilities are provided:
  * - Nesting: Self closing HTML tags starting with `:`.
  *   - `<:nested.key/>`: A key in the same module as the key referencing it.
- *   - `<:md:nested.key/>`: A key in the `md` module.
+ *   - `<:module:nested.key/>`: A key in another `module`.
  * - Tagging: HTML tags without `:` (set `TTag` and `params.tag` for configuration).
  *   - `<tag/>`: Self closing tag.
  *   - `<a>link</a>`: Open and close tag.
- *   - `<a><:nested.key/></a> <a>{link}</a>`: Tags may also contain nested translations or ICU.
+ *   - `<a><:nested.key/></a>`: Tags may also contain nested translations.
  *   - `<a><b/><c><d/></c></a><e/>`: Tags can have nested tags.
  *
  * @param params.load Function to load the translation resources for a given locale and module.
  * @param params.parse Function to parse the translation resource into a formatter function.
  * @param params.notify Function to notify when a translation resource is loaded, and then when a key is accessed.
- * @param params.tag Function to tag the translation resources, used to wrap the translation in a tag.
+ * @param params.tag Function to tag the translation resources used as fallback.
  * @param TTranslations Type of the translations to be loaded, used to type the translation keys.
  * @param TTag Type of the tag used to wrap the translation resources.
  */
@@ -77,7 +89,7 @@ export const createLocalizer = <TTranslations extends Resource, TTag = string>(p
     load: (locale: string, module: string) => Resource | Promise<Resource>
     parse?: (locale: string, module: string, key: string[], raw: string) => Formatter<TTag>
     notify?: (locale: string, module: string, promise: Promise<Resource>) => (key: string[], raw?: unknown) => void
-    tag?: Parameters<typeof createTagger<TTag>>[0]
+    tag?: Tagger<TTag>[string]
 }) => {
     params.parse ??= (_, __, ___, raw) => () => raw
     params.notify ??= () => () => {}
@@ -144,8 +156,25 @@ export const createLocalizer = <TTranslations extends Resource, TTag = string>(p
         return `${locales.join('|')}:${module}:${key.join('.')}`
     }
 
-    const tagger = createTagger<TTag>(params.tag)
-    const proxy = createProxy<TTranslations, TTag>(format, tagger)
+    const tagger = (text: string, tags: Tagger<TTag>) => {
+        const stack: (TTag | string)[][] = [[]]
+        let done = 0
+        for (const { '0': match, '1': t, index } of text.matchAll(/<\/?([^:>/\s]+)\/?>/g)) {
+            const children = stack.at(-1)!
+            if (done < index) children.push(text.slice(done, index))
+            if (match.at(-2) === '/') children.push((tags[t] ?? params.tag)([], t))
+            else if (match.at(1) !== '/') stack.push([])
+            else {
+                if (stack.length > 1) stack.pop()
+                stack.at(-1)!.push((tags[t] ?? params.tag)(children, t))
+            }
+            done = index + match.length
+        }
+        if (done < text.length) stack.at(-1)!.push(text.slice(done))
+        return params.tag!(stack.flat(), '')
+    }
+
+    const t = createProxy<TTranslations, TTag>(format, tagger)
 
     return {
         locales: () => locales,
@@ -158,43 +187,9 @@ export const createLocalizer = <TTranslations extends Resource, TTag = string>(p
         read,
         format,
         tagger,
-        t: proxy,
+        t,
     }
 }
-
-/**
- * Create a parser to replace tags from `text` using `tag` and `tags` wrapper functions.
- *
- * Supported formats are `<tag>`, `</tag>`, and `<tag/>`. Unbalanced tags produce unexpected result, but never throw.
- * Tags containing the `:` character are ignored as they are used for nesting.
- *
- * The resulting children are passed to `tag` once again with an empty tag to aggregate them into a single value.
- * The result the root of a tree of type `T | string`.
- *
- * @param tag Fallback tagger.
- * @param text Text containing tags to parse.
- * @param tags Replacer for matching tags.
- * @param TTag Type of the tag used to wrap the translation resources.
- */
-const createTagger =
-    <TTag>(tag: Tagger<TTag>[string]) =>
-    (text = '', tags: Tagger<TTag> = {}) => {
-        const stack: (TTag | string)[][] = [[]]
-        let done = 0
-        for (const { '0': match, '1': t, index } of text.matchAll(/<\/?([^:>/\s]+)\/?>/g)) {
-            const children = stack.at(-1)!
-            if (done < index) children.push(text.slice(done, index))
-            if (match.at(-2) === '/') children.push((tags[t] ?? tag)([], t))
-            else if (match.at(1) !== '/') stack.push([])
-            else {
-                if (stack.length > 1) stack.pop()
-                stack.at(-1)!.push((tags[t] ?? tag)(children, t))
-            }
-            done = index + match.length
-        }
-        if (done < text.length) stack.at(-1)!.push(text.slice(done))
-        return tag(stack.flat(), '')
-    }
 
 /**
  * Create a typed proxy tree for easier access to resource translations.
@@ -204,12 +199,13 @@ const createTagger =
  * cases it is necessary to access translations dynamically, where key parts might not be typed. A special `$` key
  * is provided to bypass the type checking.
  *
- * @param format {@linkcode createLocalizer} `format` function.
+ * @param format Function to resolve translation strings.
+ * @param tagger Function to tag resolved translation strings.
  * @param TTranslations Type of the translations to be loaded, used to type the translation keys.
  */
 const createProxy = <TTranslations extends Resource, TTag>(
     format: (module: string, key: string[], values?: Parameters<Translation<string, TTag>>[0]) => string,
-    tagger: ReturnType<typeof createTagger<TTag>>,
+    tagger: (text: string, tags: Tagger<TTag>) => string | TTag,
 ): Translation<TTranslations, TTag> => {
     type ProxyObject = { module: string; key: string[]; children: { [_ in string]: ProxyObject } }
     const proxyObject = (module: string, key: string[]) => Object.assign(() => {}, { module, key, children: {} })
@@ -225,6 +221,5 @@ const createProxy = <TTranslations extends Resource, TTag>(
             return (target.children[p] ??= new Proxy(proxyObject(module, key), proxyHandler))
         },
     }
-    proxyObject('', [])()
     return new Proxy(proxyObject('', []), proxyHandler) as unknown as Translation<TTranslations, TTag>
 }
