@@ -27,43 +27,23 @@ export type Tagger<TTag> = {
 }
 
 /**
- * Resolve nested keys in objects or using dot notation with to create a centralized getter to all keys in `TValue`.
- * - If `TValue` it is an object, recursively return its internal keys, resolving dot notation with {@linkcode Nest}.
+ * Resolve nested keys in objects to create a centralized getter to all keys in `TValue`.
+ * - If `TValue` is an object, recursively return its internal keys.
  * - If `TValue` is a string, return a parameterized {@linkcode Formatter}.
  *
- * @param TValue Value nest or to return getter.
+ * @param TValue Value to nest or to return getter.
  */
 export type Translation<TValue, TTag> = TValue extends object
-    ? UnionToIntersection<{ [k in keyof TValue]: Nest<k, TValue[k], TTag> }[keyof TValue]>
-    : TValue extends string
-    ? Formatter<TTag>
-    : never
-
-/**
- * Nest splits dotted keys into nested objects.
- * For a `TKey` `TValue` pair, create a nested object for each `.` in `TKey`. The original `TKey` is still kept.
- * `TValue` is applied to {@linkcode Translation}. Non-existent keys can be accessed through {@linkcode Fallback}.
- *
- * @param TKey Key to nest.
- * @param TValue Key value to nest.
- */
-type Nest<TKey extends PropertyKey, TValue, TTag> = {
-    [_ in TKey]: Translation<TValue, TTag> & Fallback<TTag>
-} & (TKey extends `${infer TPre}.${infer TSuf}` ? { [_ in TPre]: Nest<TSuf, TValue, TTag> } : unknown) &
-    Fallback<TTag>
+    ? { [Key in keyof TValue]: Translation<TValue[Key], TTag> }
+    : Formatter<TTag>
 
 /**
  * Fallback provides an escape hatch to untyped translation keys. Untyped keys require an extra property access to `$`.
  */
-type Fallback<TTag> = { [_ in string]: Fallback<TTag> } & { $: Formatter<TTag> }
+type Fallback<TTag> = { [_ in string]: Fallback<TTag> } & Formatter<TTag>
 
 /**
- * Convert a union of types `U` to an intersection of the same types.
- */
-type UnionToIntersection<U> = (U extends unknown ? (k: U) => void : never) extends (k: infer I) => void ? I : never
-
-/**
- * Create a localizer that orchestrates translation resources loading for multiple locales and modules.
+ * Create a localizer that orchestrates translation resource loading for multiple locales and modules.
  *
  * Locales and modules can be added or modified dynamically. Translation resources are downloaded when locales or
  * modules change. Resources are fetched using the `params.load` provided by the caller.
@@ -71,7 +51,7 @@ type UnionToIntersection<U> = (U extends unknown ? (k: U) => void : never) exten
  * The following translation utilities are provided:
  * - Nesting: Self closing HTML tags starting with `:`.
  *   - `<:nested.key/>`: A key in the same module as the key referencing it.
- *   - `<:module:nested.key/>`: A key in another `module`.
+ *   - `<:module:nested.key/>`: A key in a different module.
  * - Tagging: HTML tags without `:` (set `TTag` and `params.tag` for configuration).
  *   - `<tag/>`: Self closing tag.
  *   - `<a>link</a>`: Open and close tag.
@@ -79,39 +59,42 @@ type UnionToIntersection<U> = (U extends unknown ? (k: U) => void : never) exten
  *   - `<a><b/><c><d/></c></a><e/>`: Tags can have nested tags.
  *
  * @param params.load Function to load the translation resources for a given locale and module.
- * @param params.parse Function to parse the translation resource into a formatter function.
  * @param params.notify Function to notify when a translation resource is loaded, and then when a key is accessed.
+ * @param params.parse Function to parse the translation resource into a formatter function.
  * @param params.tag Function to tag the translation resources used as fallback.
  * @param TTranslations Type of the translations to be loaded, used to type the translation keys.
  * @param TTag Type of the tag used to wrap the translation resources.
  */
 export const createLocalizer = <TTranslations extends Resource, TTag = string>(params: {
     load: (locale: string, module: string) => Resource | Promise<Resource>
-    parse?: (locale: string, module: string, key: string[], raw: string) => Formatter<TTag>
     notify?: (locale: string, module: string, promise: Promise<Resource>) => (key: string[], raw?: unknown) => void
+    parse?: (locale: string, key: string[], value: string) => Formatter<TTag>
     tag?: Tagger<TTag>[string]
 }) => {
-    params.parse ??= (_, __, ___, raw) => () => raw
     params.notify ??= () => () => {}
+    params.parse ??= (_, __, value) => () => value
     params.tag ??= children => children.join('')
 
     let locales = Object.freeze([] as string[])
     let modules = Object.freeze([] as string[])
+
     const subscriptions = new Set<(locales: readonly string[], modules: readonly string[]) => void>()
+    const promises: { [_ in string]?: { [_ in string]?: Promise<Resource> } } = {}
+    const notifiers: { [_ in string]?: { [_ in string]?: ReturnType<NonNullable<typeof params.notify>> } } = {}
+    const resources: { [_ in string]?: Resource } = {}
+    const formatters: { [_ in string]?: ReturnType<NonNullable<typeof params.parse>> } = {}
+
     const setLocales = (...locales_: string[]) => ((locales = Object.freeze([...new Set(locales_)])), reload())
     const setModules = (...modules_: string[]) => ((modules = Object.freeze([...new Set(modules_)])), reload())
+
     const subscribe = (handler: (locales: readonly string[], modules: readonly string[]) => void) => (
-        subscriptions.add(handler), handler(locales, modules)
+        subscriptions.add(handler),
+        handler(locales, modules)
     )
     const unsubscribe = (handler: (locales: readonly string[], modules: readonly string[]) => void) =>
         subscriptions.delete(handler)
 
-    const promises: { [_ in string]?: { [_ in string]?: Promise<Resource> } } = {}
-    const resources: { [_ in string]?: { [_ in string]?: Resource } } = {}
-    const notifiers: { [_ in string]?: { [_ in string]?: ReturnType<NonNullable<typeof params.notify>> } } = {}
-    const formatters: { [_ in string]?: ReturnType<NonNullable<typeof params.parse>> } = {}
-
-    const wait = () => Promise.all(locales.flatMap(locale => modules.map(module => promises[locale]![module]!)))
+    const wait = () => Promise.all(Object.values(promises).flatMap(modules => Object.values(modules!)))
 
     const reload = () => {
         locales
@@ -121,39 +104,34 @@ export const createLocalizer = <TTranslations extends Resource, TTag = string>(p
                 const promise = Promise.try(() => params.load(locale, module))
                     .catch<Resource>(error => (console.warn('intl - load error:', { locale, module, error }), {}))
                     .then(resource => ((resources[locale] ??= {})[module] = resource))
-                promises[locale] ??= {}
-                promises[locale][module] = promise
-                notifiers[locale] ??= {}
-                notifiers[locale][module] = params.notify!(locale, module, promise)
+                ;(promises[locale] ??= {})[module] = promise
+                ;(notifiers[locale] ??= {})[module] = params.notify!(locale, module, promise)
             })
         subscriptions.forEach(handler => handler(locales, modules))
     }
 
-    const read = (locale: string, module: string, key: string[]): string => {
-        const resource = resources[locale]?.[module]
-        const raw =
-            resource?.[key.join('.')] ??
-            key.reduce<string | Resource | undefined>(($, k) => ($ as Resource | undefined)?.[k], resource)
-        notifiers[locale]![module]!(key, raw)
-        if (!raw) throw Error('intl - key missing')
-        if (typeof raw === 'object') throw Error('intl - key partial')
-        return raw.replaceAll(/<:(.+?)\/>/g, (_, nestedId: string) => {
-            const [key, ns = module] = nestedId.split(':').reverse()
-            return read(locale, ns, key.split('.'))
+    const read = (locale: string, key: string[]): string => {
+        const resource = resources[locale]
+        const value = key.reduce<string | Resource | undefined>(($, k) => ($ as Resource | undefined)?.[k], resource)
+        if (!value) throw Error('intl - key missing')
+        if (typeof value === 'object') throw Error('intl - key partial')
+        notifiers[locale]![key[0]]!(key, value)
+        return value.replaceAll(/<:(.+?)\/>/g, (_, tag: string) => {
+            const nestedKey = tag.split(/[:.]/)
+            return read(locale, tag.includes(':') ? nestedKey : [key[0], ...nestedKey])
         })
     }
 
-    const format = (module: string, key: string[], values?: Parameters<Formatter<TTag>>[0]) => {
+    const format = (key: string[], values?: Parameters<Formatter<TTag>>[0]) => {
         for (const locale of locales) {
-            const resource = resources[locale]?.[module]
-            const id = `${locale}:${module}:${key}`
             try {
-                return (formatters[id] ??= params.parse!(locale, module, [], read(locale, module, key)))(values)
+                return (formatters[`${locale}:${key}`] ??= params.parse!(locale, [], read(locale, key)))(values)
             } catch (error) {
-                if (resource) console.warn('intl - format error:', { locale, module, key, values, error })
+                const hasResource = !!resources[locale]?.[key[0]]
+                if (hasResource) console.warn('intl - error:', { error, resources, locale, key, values })
             }
         }
-        return `${locales.join('|')}:${module}:${key.join('.')}`
+        return `${locales.join('|')}:${key.join('.')}`
     }
 
     const tagger = (text: string, tags: Tagger<TTag>) => {
@@ -194,32 +172,25 @@ export const createLocalizer = <TTranslations extends Resource, TTag = string>(p
 /**
  * Create a typed proxy tree for easier access to resource translations.
  *
- * When resolving a translation, if it does not exist in the type, it will trigger a typescript error.
- * This behavior is useful to ensure that all translations are typed and available in the codebase. However, in some
- * cases it is necessary to access translations dynamically, where key parts might not be typed. A special `$` key
- * is provided to bypass the type checking.
- *
  * @param format Function to resolve translation strings.
  * @param tagger Function to tag resolved translation strings.
  * @param TTranslations Type of the translations to be loaded, used to type the translation keys.
  */
 const createProxy = <TTranslations extends Resource, TTag>(
-    format: (module: string, key: string[], values?: Parameters<Translation<string, TTag>>[0]) => string,
+    format: (key: string[], values?: Parameters<Translation<string, TTag>>[0]) => string,
     tagger: (text: string, tags: Tagger<TTag>) => string | TTag,
-): Translation<TTranslations, TTag> => {
-    type ProxyObject = { module: string; key: string[]; children: { [_ in string]: ProxyObject } }
-    const proxyObject = (module: string, key: string[]) => Object.assign(() => {}, { module, key, children: {} })
-    const proxyHandler: ProxyHandler<ProxyObject> = {
+): Translation<TTranslations, TTag> & { $: Fallback<TTag> } => {
+    type Proxy = { key: string[]; children: { [_ in string]: Proxy } }
+    const proxy = (key: string[]) => Object.assign(() => {}, { key, children: {} })
+    const handler: ProxyHandler<Proxy> = {
         apply: (target, _, [values, tags]: Parameters<Translation<string, TTag>>) => {
-            const text = format(target.module, target.key, values)
+            const text = format(target.key, values)
             return tags ? tagger(text, tags) : text
         },
         get: (target, p, receiver: unknown) => {
             if (typeof p === 'symbol' || p === '$') return receiver
-            const module = target.module || p
-            const key = !target.module ? target.key : !target.key.length ? [p] : [...target.key, p]
-            return (target.children[p] ??= new Proxy(proxyObject(module, key), proxyHandler))
+            return (target.children[p] ??= new Proxy(proxy([...target.key, p]), handler))
         },
     }
-    return new Proxy(proxyObject('', []), proxyHandler) as unknown as Translation<TTranslations, TTag>
+    return new Proxy(proxy([]), handler) as unknown as Translation<TTranslations, TTag> & { $: Fallback<TTag> }
 }
