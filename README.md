@@ -12,12 +12,12 @@ npm install @_apparatus_/intl-tools
 
 ## Features
 
--   🌍 **Dynamic loading** - Load translations for different locales and modules on demand.
--   🔌 **Pluggable formatters** - Integrate with external libraries like MessageFormat (ICU), Fluent, etc.
--   🪆 **Nesting** - Reference translations within translations using `<:nested.key/>` syntax.
--   🏷️ **HTML-like Tags** - Wrap content with tags for rich text formatting.
--   ✅ **Type safety** - Fully typed translation keys with TypeScript autocomplete.
--   📦 **Module system** - Organize translations by feature modules for better code splitting.
+- 🌍 **Dynamic loading** - Load translations for different locales and modules on demand.
+- 🔌 **Pluggable formatters** - Integrate with external libraries like MessageFormat (ICU), Fluent, etc.
+- 🪆 **Nesting** - Reference translations within translations using `<.nested.key/>` and `<:module.nested.key/>` syntax.
+- 🏷️ **HTML-like Tags** - Wrap content with tags for rich text formatting.
+- ✅ **Type safety** - Fully typed translation keys with TypeScript autocomplete.
+- 📦 **Module system** - Organize translations by feature modules for better code splitting.
 
 ## Examples
 
@@ -94,7 +94,7 @@ localizer.setLocales('pt-BR', 'en-US')
 {
     "app": "MyApp",
     "welcome": "Welcome to <:app/>!",
-    "footer": "© 2024 <:app/>. All rights reserved.",
+    "footer": "© 2024 <.app/>. All rights reserved.",
     "cross_module": "Check <:dashboard:title/> for details"
 }
 
@@ -112,8 +112,8 @@ import IntlMessageFormat from 'intl-messageformat'
 
 const localizer = createLocalizer<Translations>({
     ...
-    parse: (locale, module, key, raw) => {
-        const formatter = new IntlMessageFormat(raw, locale)
+    parse: (locale, key, value) => {
+        const formatter = new IntlMessageFormat(value, locale)
         return values => formatter.format(values) as string
     },
 })
@@ -178,8 +178,8 @@ t.common.greeting[greetingType]() // ✅ Type safe
 // Key segment not known at compile time
 const greetingType = getUserPreferredGreeting() // string
 t.common.greeting[greetingType]() // ⛔ Type error
-t.common.greeting[greetingType].$() // ⚠️ Bypass error
+t.$.common.greeting[greetingType]() // ⚠️ Bypass error
 
 // Access deeply nested untyped keys
-t.dashboard.user.profile.settings.$()
+t.$.dashboard.user.profile.settings()
 ```
