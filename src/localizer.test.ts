@@ -1,8 +1,13 @@
-import assert from 'node:assert/strict'
-import { mock, test } from 'node:test'
+import { expect, mock, test } from 'bun:test'
 import { createLocalizer } from './localizer.ts'
 
-const translations = { hi: 'hi', 'nest.hi': '<:hi/>', icu: '{hi}', tags: '0<a>1<b/>2</a>3', u: '<a><b>', o: '</a></b>' }
+const translations = {
+    hi: 'hi',
+    nest: { hi: '<:hi/>' },
+    tags: '0<a>1<b/>2</a>3',
+    u: '<a><b>',
+    o: '</a></b>',
+}
 type Translations = { base: typeof translations }
 
 const tags = (children: string[], tag: string) => `<${tag}>${children.join('')}</${tag}>`
@@ -13,16 +18,16 @@ const load = (locale: string) => {
 
 test('load resources', async () => {
     const localizer = createLocalizer<Translations>({ load })
-    const spy = mock.fn()
+    const spy = mock((..._: unknown[]) => {})
     localizer.subscribe(spy)
-    assert.deepEqual(spy.mock.calls.at(-1)?.arguments, [[], []])
+    expect(spy).toHaveBeenLastCalledWith([], [])
     localizer.setLocales('en-US')
-    assert.deepEqual(spy.mock.calls.at(-1)?.arguments, [['en-US'], []])
+    expect(spy).toHaveBeenLastCalledWith(['en-US'], [])
     localizer.setModules('base')
-    assert.deepEqual(spy.mock.calls.at(-1)?.arguments, [['en-US'], ['base']])
+    expect(spy).toHaveBeenLastCalledWith(['en-US'], ['base'])
     await localizer.wait()
     localizer.setLocales('pt-BR')
-    assert.deepEqual(spy.mock.calls.at(-1)?.arguments, [['pt-BR'], ['base']])
+    expect(spy).toHaveBeenLastCalledWith(['pt-BR'], ['base'])
     await localizer.wait()
     localizer.unsubscribe(spy)
 })
@@ -33,10 +38,9 @@ test('translate key', async () => {
     localizer.setLocales('en-US')
     localizer.setModules('base')
     await localizer.wait()
-    assert(t.base.hi(), 'hi')
-    assert(t.base.nest.hi(), 'hi')
-    assert(t.base.icu(), 'en-US:base:icu')
-    assert(t.other.hi.$(), 'en-US:other:hi')
+    expect(t.base.hi()).toBe('hi')
+    expect(t.base.nest.hi()).toBe('hi')
+    expect(t.$.other.hi()).toBe('en-US:other.hi')
 })
 
 test('resolve tag', async () => {
@@ -45,7 +49,7 @@ test('resolve tag', async () => {
     localizer.setLocales('en-US')
     localizer.setModules('base')
     await localizer.wait()
-    assert(t.base.tags({}, { a: tags }), '<>0<a>1<b></b>2</a>3</>')
-    assert.doesNotThrow(() => t.base.o({}, {}))
-    assert.doesNotThrow(() => t.base.u({}, {}))
+    expect(t.base.tags({}, { a: tags })).toBe('0<a>12</a>3')
+    expect(() => t.base.o({}, {})).not.toThrow()
+    expect(() => t.base.u({}, {})).not.toThrow()
 })

@@ -49,13 +49,13 @@ type Fallback<TTag> = { [_ in string]: Fallback<TTag> } & Formatter<TTag>
  * modules change. Resources are fetched using the `params.load` provided by the caller.
  *
  * The following translation utilities are provided:
- * - Nesting: Self closing HTML tags starting with `:`.
- *   - `<:nested.key/>`: A key in the same module as the key referencing it.
- *   - `<:module:nested.key/>`: A key in a different module.
+ * - Nesting: Self closing HTML tags starting with `.` or `:`.
+ *   - `<.nested.key/>`: A key in the same module as the key referencing it.
+ *   - `<:module.nested.key/>`: A key in a different module.
  * - Tagging: HTML tags without `:` (set `TTag` and `params.tag` for configuration).
  *   - `<tag/>`: Self closing tag.
  *   - `<a>link</a>`: Open and close tag.
- *   - `<a><:nested.key/></a>`: Tags may also contain nested translations.
+ *   - `<a><.nested.key/></a>`: Tags may also contain nested translations.
  *   - `<a><b/><c><d/></c></a><e/>`: Tags can have nested tags.
  *
  * @param params.load Function to load the translation resources for a given locale and module.
@@ -116,8 +116,8 @@ export const createLocalizer = <TTranslations extends Resource, TTag = string>(p
         if (!value) throw Error('intl - key missing')
         if (typeof value === 'object') throw Error('intl - key partial')
         notifiers[locale]![key[0]]!(key, value)
-        return value.replaceAll(/<:(.+?)\/>/g, (_, tag: string) => {
-            const nestedKey = tag.split(/[:.]/)
+        return value.replaceAll(/<[:.](.+?)\/>/g, (_, tag: string) => {
+            const nestedKey = tag.split('.')
             return read(locale, tag.includes(':') ? nestedKey : [key[0], ...nestedKey])
         })
     }
@@ -125,7 +125,7 @@ export const createLocalizer = <TTranslations extends Resource, TTag = string>(p
     const format = (key: string[], values?: Parameters<Formatter<TTag>>[0]) => {
         for (const locale of locales) {
             try {
-                return (formatters[`${locale}:${key}`] ??= params.parse!(locale, [], read(locale, key)))(values)
+                return (formatters[`${locale}:${key}`] ??= params.parse!(locale, key, read(locale, key)))(values)
             } catch (error) {
                 const hasResource = !!resources[locale]?.[key[0]]
                 if (hasResource) console.warn('intl - error:', { error, resources, locale, key, values })
