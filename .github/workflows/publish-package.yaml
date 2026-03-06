@@ -15,28 +15,21 @@ jobs:
         steps:
             - name: Checkout code
               uses: actions/checkout@v5
-
-            - name: Setup pnpm
-              uses: pnpm/action-setup@v4
+            - name: Set up Bun
+              uses: oven-sh/setup-bun@v2
               with:
-                  version: 10
-
-            - name: Set up Node.js
-              uses: actions/setup-node@v6
-              with:
-                  node-version: 24
-                  registry-url: 'https://registry.npmjs.org/'
+                  bun-version: 1.3.10
 
             - name: Install dependencies
-              run: pnpm install --frozen-lockfile
+              run: bun install --frozen-lockfile
 
             - name: Test package
-              run: pnpm run test
+              run: bun run test
 
             - name: Build package
-              run: pnpm run build
+              run: bun run build
 
             - name: Publish package
-              run: pnpm publish --no-git-checks --provenance --access public
-              env:
-                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+              run: |
+                  bun install -g npm@latest
+                  bun x npm publish --provenance --access public
