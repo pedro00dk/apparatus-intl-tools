@@ -8,39 +8,40 @@ export type Resource = {
 /**
  * Function type to format resolved translation values.
  *
- * This function produces a string or `TTag` based on the provided arguments.
+ * This function produces a string or `Tag` based on the provided arguments.
  *
- * @param TTag Tag type.
+ * @param Tag Tag type.
  */
-type Formatter<TTag> = {
+type Formatter<Tag> = {
     <T extends [_?: object]>(...args: T): string
-    <T extends [_?: object, _?: Tagger<TTag>]>(...args: T): string | TTag
+    <T extends [_?: object, _?: Tagger<Tag>]>(...args: T): string | Tag
 }
 
 /**
  * Wrapper functions for transforming html-like tags inside translations.
  *
- * @param TTag Tag type.
+ * @param Tag Tag type.
  */
-export type Tagger<TTag> = {
-    [_ in string]: (children: (string | TTag)[], tag: string) => string | TTag
+export type Tagger<Tag> = {
+    [_ in string]: (children: (string | Tag)[], tag: string) => string | Tag
 }
 
 /**
- * Resolve nested keys in objects to create a centralized getter to all keys in `TValue`.
- * - If `TValue` is an object, recursively return its internal keys.
- * - If `TValue` is a string, return a parameterized {@linkcode Formatter}.
+ * Resolve nested keys in objects to create a centralized getter to all keys in `Resource`.
+ * - If `Resource` is an object, recursively return its internal keys.
+ * - If `Resource` is a string, return a parameterized {@linkcode Formatter}.
  *
- * @param TValue Value to nest or to return getter.
+ * @param Resource Translation resource type.
+ * @param Tag Tag type.
  */
-export type Translation<TValue, TTag> = TValue extends object
-    ? { [Key in keyof TValue]: Translation<TValue[Key], TTag> }
-    : Formatter<TTag>
+export type Translation<Resource, Tag> = Resource extends object
+    ? { [Key in keyof Resource]: Translation<Resource[Key], Tag> }
+    : Formatter<Tag>
 
 /**
  * Fallback provides an escape hatch to untyped translation keys. Untyped keys require an extra property access to `$`.
  */
-type Fallback<TTag> = { [_ in string]: Fallback<TTag> } & Formatter<TTag>
+type Fallback<Tag> = { [_ in string]: Fallback<Tag> } & Formatter<Tag>
 
 /**
  * Create a localizer that orchestrates translation resource loading for multiple locales and modules.
@@ -62,14 +63,14 @@ type Fallback<TTag> = { [_ in string]: Fallback<TTag> } & Formatter<TTag>
  * @param params.notify Function to notify when a translation resource is loaded, and then when a key is accessed.
  * @param params.parse Function to parse the translation resource into a formatter function.
  * @param params.tag Function to tag the translation resources used as fallback.
- * @param TTranslations Type of the translations to be loaded, used to type the translation keys.
- * @param TTag Type of the tag used to wrap the translation resources.
+ * @param Translations Type of the translations to be loaded, used to type the translation keys.
+ * @param Tag Type of the tag used to wrap the translation resources.
  */
-export const createLocalizer = <TTranslations extends Resource, TTag = string>(params: {
+export const createLocalizer = <Translations extends Resource, Tag = string>(params: {
     load: (locale: string, module: string) => Resource | Promise<Resource>
     notify?: (locale: string, module: string, promise: Promise<Resource>) => (key: string[], raw?: unknown) => void
-    parse?: (locale: string, key: string[], value: string) => Formatter<TTag>
-    tag?: Tagger<TTag>[string]
+    parse?: (locale: string, key: string[], value: string) => Formatter<Tag>
+    tag?: Tagger<Tag>[string]
 }) => {
     params.notify ??= () => () => {}
     params.parse ??= (_, __, value) => () => value
@@ -122,7 +123,7 @@ export const createLocalizer = <TTranslations extends Resource, TTag = string>(p
         })
     }
 
-    const format = (key: string[], values?: Parameters<Formatter<TTag>>[0]) => {
+    const format = (key: string[], values?: Parameters<Formatter<Tag>>[0]) => {
         for (const locale of locales) {
             try {
                 return (formatters[`${locale}:${key}`] ??= params.parse!(locale, key, read(locale, key)))(values)
@@ -134,8 +135,8 @@ export const createLocalizer = <TTranslations extends Resource, TTag = string>(p
         return `${locales.join('|')}:${key.join('.')}`
     }
 
-    const tagger = (text: string, tags: Tagger<TTag>) => {
-        const stack: (TTag | string)[][] = [[]]
+    const tagger = (text: string, tags: Tagger<Tag>) => {
+        const stack: (Tag | string)[][] = [[]]
         let done = 0
         for (const { '0': match, '1': t, index } of text.matchAll(/<\/?([^:>/\s]+)\/?>/g)) {
             const children = stack.at(-1)!
@@ -152,7 +153,7 @@ export const createLocalizer = <TTranslations extends Resource, TTag = string>(p
         return params.tag!(stack.flat(), '')
     }
 
-    const t = createProxy<TTranslations, TTag>(format, tagger)
+    const t = createProxy<Translations, Tag>(format, tagger)
 
     return {
         locales: () => locales,
