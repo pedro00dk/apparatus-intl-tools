@@ -114,9 +114,9 @@ export const createLocalizer = <Translations extends Resource, Tag = string>(par
     const read = (locale: string, key: string[]): string => {
         const resource = resources[locale]
         const value = key.reduce<string | Resource | undefined>(($, k) => ($ as Resource | undefined)?.[k], resource)
+        notifiers[locale]?.[key[0]]?.(key, value)
         if (!value) throw Error('intl - key missing')
         if (typeof value === 'object') throw Error('intl - key partial')
-        notifiers[locale]![key[0]]!(key, value)
         return value.replaceAll(/<[:.](.+?)\/>/g, (_, tag: string) => {
             const nestedKey = tag.split('.')
             return read(locale, tag.includes(':') ? nestedKey : [key[0], ...nestedKey])
